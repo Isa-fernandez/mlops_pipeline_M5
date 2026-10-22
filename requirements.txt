@@ -1,0 +1,37 @@
+# ============================================================================
+# PIM5 - Dependencias del proyecto (Python 3.13)
+# Las librerías del modelo y de la API llevan versión fija (==): el modelo guardado
+# (models/modelo_final.joblib) solo carga bien con las mismas versiones con las que se entrenó.
+# ============================================================================
+
+# --- Datos y modelo (versiones fijas) ---
+pandas==3.0.6
+numpy==2.5.4
+scipy==1.18.1
+scikit-learn==1.9.1
+lightgbm==4.7.0
+xgboost==3.4.1
+joblib==1.6.0
+
+# --- API (Avance 4, versiones fijas) ---
+fastapi==0.143.0
+uvicorn[standard]==0.54.0
+pydantic==2.14.1
+python-multipart          # necesaria para recibir archivos CSV en /predict/csv
+requests                  # la app de Streamlit consulta la API
+
+# --- Monitoreo y app (Avance 3) ---
+streamlit==1.66.0
+plotly==7.1.0
+
+# --- Análisis y notebooks (Avances 1 y 2) ---
+openpyxl
+python-dotenv
+db-dtypes
+jupyter
+notebook
+ipykernel
+ipywidgets
+matplotlib
+seaborn
+statsmodels
