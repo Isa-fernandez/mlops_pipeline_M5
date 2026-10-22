@@ -1,0 +1,37 @@
+# Archivos que NO se copian a la imagen de Docker (la hacen más liviana y segura)
+
+# Entornos virtuales
+venv/
+.venv/
+env/
+.env
+
+# Git y editores
+.git/
+.gitignore
+.vscode/
+.idea/
+
+# Cache de Python y de herramientas
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ipynb_checkpoints/
+
+# Datos y salidas: la API no los necesita (recibe los datos en cada solicitud)
+*.csv
+*.xlsx
+reports/
+
+# Notebooks y documentación
+*.ipynb
+*.md
+*.pdf
+
+# Logs y sistema operativo
+*.log
+.DS_Store
+Thumbs.db

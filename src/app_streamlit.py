@@ -10,17 +10,23 @@ Qué muestra (una pestaña por tema):
     3. Evolución: drift a lo largo del tiempo, con detección de tendencias y cambios bruscos.
     4. Alertas y recomendaciones: mensajes automáticos y sugerencias (reentrenar, revisar variables).
     5. Datos y pronósticos: tabla de monitoreo (datos + probabilidad de no pago + resultado real).
-    6. Simulador: probabilidad de no pago de un cliente nuevo con el modelo guardado.
+    6. Simulador: probabilidad de no pago de un cliente nuevo y predicción por lotes (CSV),
+       consultando la API de FastAPI (model_deploy.py).
 
 Toda la lógica de cálculo vive en model_monitoring.py; este archivo solo la muestra.
-Esta versión carga el modelo directamente. En el Avance 4 el simulador pasará a consultar
-la API de FastAPI (model_deploy.py).
+Avance 4: el simulador consulta la API (por defecto http://localhost:8000; se puede cambiar con
+la variable de entorno API_URL). Si la API no está en línea, usa el modelo local y lo avisa.
 
 Ejecutar (desde la raíz del repo, con el entorno virtual activo):
-    streamlit run src/app_streamlit.py
+    1. API (otra terminal):  uvicorn src.model_deploy:app   (o el contenedor de Docker)
+    2. App:                  streamlit run src/app_streamlit.py
 '''
 
+import json
+import os
+
 import pandas as pd
+import requests
 import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
@@ -39,6 +45,27 @@ from model_monitoring import (  # noqa: E402
 COLORES = {'Estable': '#2E8B57', 'Moderado': '#E6A100', 'Alto': '#C0392B'}
 COLOR_REF, COLOR_ACT = '#7F8C8D', '#2E86AB'
 AVISO_POR_NIVEL = {'Crítica': st.error, 'Advertencia': st.warning, 'Sin alertas': st.success}
+API_URL = os.getenv('API_URL', 'http://localhost:8000')   # dirección de la API (model_deploy.py)
+TIEMPO_ESPERA_API = 30                                    # segundos máximos de espera
+
+
+def api_en_linea() -> bool:
+    '''True si la API responde en /health.'''
+    try:
+        return requests.get(f'{API_URL}/health', timeout=2).ok
+    except requests.RequestException:
+        return False
+
+
+def predecir_con_api(registros: pd.DataFrame) -> dict:
+    '''
+    Envía un lote de registros a POST /predict y devuelve la respuesta de la API.
+    Se pasa por to_json para convertir los NaN en null y los tipos de numpy en tipos de JSON.
+    '''
+    datos = json.loads(registros.to_json(orient='records'))
+    respuesta = requests.post(f'{API_URL}/predict', json={'data': datos}, timeout=TIEMPO_ESPERA_API)
+    respuesta.raise_for_status()
+    return respuesta.json()
 
 
 # ---------------------------------------------------------------------------
@@ -334,6 +361,12 @@ with tab5:
 # ---------------------------------------------------------------------------
 with tab6:
     st.subheader('Probabilidad de no pago de un cliente nuevo')
+    en_linea = api_en_linea()
+    if en_linea:
+        st.success(f'Conectado a la API: {API_URL} (documentación en {API_URL}/docs)')
+    else:
+        st.warning(f'La API no responde en {API_URL}: se usa el modelo local. Para usar la API, '
+                   'iniciarla con `uvicorn src.model_deploy:app` o con el contenedor de Docker.')
     st.caption('Las variables que no se piden aquí se completan con el valor típico (mediana o moda) '
                'de la referencia.')
 
@@ -363,11 +396,37 @@ with tab6:
                    'tipo_credito': tipo_cred, 'tipo_laboral': tipo_lab,
                    'tendencia_ingresos': None if tendencia_ing == 'Sin dato' else tendencia_ing}
         entrada = pd.DataFrame([cliente])[columnas_entrada()]
-        probabilidad = float(proba_no_pago(paquete, entrada)[0])
-        alerta_cliente = probabilidad >= paquete['umbral_no_pago']
-        m1, m2 = st.columns(2)
+        if en_linea:
+            resultado = predecir_con_api(entrada)['resultados'][0]
+            probabilidad, alerta_cliente, fuente = resultado['prob_no_pago'], resultado['alerta'], 'API'
+        else:
+            probabilidad = float(proba_no_pago(paquete, entrada)[0])
+            alerta_cliente = probabilidad >= paquete['umbral_no_pago']
+            fuente = 'modelo local'
+        m1, m2, m3 = st.columns(3)
         m1.metric('Probabilidad de no pago', f'{probabilidad:.1%}')
         m2.metric('Decisión del modelo', 'ALERTA: revisar' if alerta_cliente else 'Sin alerta')
+        m3.metric('Calculado con', fuente)
         st.caption(f'La alerta se activa con probabilidad ≥ {paquete["umbral_no_pago"]:.1%}. '
                    'El modelo tiene capacidad de discriminación limitada (ROC-AUC ≈ 0,68): '
                    'sirve para priorizar revisiones, no para decidir solo.')
+
+    st.divider()
+    st.subheader('Predicción por lotes (CSV) con la API')
+    st.caption('Subir un CSV con las 20 columnas del modelo (las columnas de más se ignoran). '
+               'Cada fila se envía a la API en una sola solicitud por lote.')
+    archivo = st.file_uploader('Archivo CSV', type='csv', disabled=not en_linea)
+    if archivo is not None and en_linea:
+        lote = pd.read_csv(archivo)
+        faltantes = [c for c in columnas_entrada() if c not in lote.columns]
+        if faltantes:
+            st.error(f'Faltan columnas: {faltantes}')
+        else:
+            respuesta = predecir_con_api(lote[columnas_entrada()])
+            salida = pd.concat([lote.reset_index(drop=True), pd.DataFrame(respuesta['resultados'])], axis=1)
+            c1, c2 = st.columns(2)
+            c1.metric('Registros', f'{respuesta["n_registros"]:,}')
+            c2.metric('Alertas', f'{respuesta["n_alertas"]:,} ({respuesta["n_alertas"] / respuesta["n_registros"]:.1%})')
+            st.dataframe(salida, width='stretch', hide_index=True)
+            st.download_button('Descargar resultados', data=salida.to_csv(index=False).encode('utf-8-sig'),
+                               file_name='predicciones_api.csv', mime='text/csv')
